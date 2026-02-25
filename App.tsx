@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Word, QuizQuestion, AppView, DailyMission, UserVocabProgressMap, UserProfile } from './types';
+import { Word, QuizQuestion, AppView, DailyMission, UserVocabProgressMap, UserProfile, GrammarMapData } from './types';
 import { VOCABULARY_LIST, CATEGORY_SORT_ORDER, CORE_VOCAB_MAP } from './constants';
 import WordCard from './components/WordCard';
 import FlashcardView from './components/FlashcardView';
@@ -26,7 +26,8 @@ import {
   fetchUserVocabProgress,
   markWordViewed,
   fetchFamilyStats,
-  submitSrsResult
+  submitSrsResult,
+  fetchGrammarMap
 } from './services/gasService';
 import { 
   getEffectiveApiKey
@@ -57,6 +58,7 @@ const App: React.FC = () => {
   const [loadingMission, setLoadingMission] = useState(false);
   const [missionQuizWords, setMissionQuizWords] = useState<Word[] | undefined>(undefined);
   const [familyStats, setFamilyStats] = useState<FamilyStats | null>(null);
+  const [grammarMap, setGrammarMap] = useState<GrammarMapData>({});
 
   // User Profiles State
   const [userProfiles, setUserProfiles] = useState<UserProfile[]>(() => {
@@ -100,15 +102,17 @@ const App: React.FC = () => {
       setLoadingMission(true);
       
       // Parallel fetch for Mission, Progress and Family Stats
-      const [mission, progressMap, fStats] = await Promise.all([
+      const [mission, progressMap, fStats, gMap] = await Promise.all([
           fetchDailyMission(username),
           fetchUserVocabProgress(username),
-          fetchFamilyStats()
+          fetchFamilyStats(),
+          fetchGrammarMap(username)
       ]);
 
       setDailyMission(mission);
       if (progressMap) setUserVocabProgress(progressMap);
       setFamilyStats(fStats);
+      setGrammarMap(gMap || {});
       
       setLoadingMission(false);
       
@@ -147,7 +151,7 @@ const App: React.FC = () => {
       loadedWords = loadedWords.map(w => {
           const lowerTerm = w.term.toLowerCase().trim();
           const staticData = staticMap.get(lowerTerm);
-          let finalWord = { ...w };
+          const finalWord = { ...w };
 
           const staticTag = CORE_VOCAB_MAP[w.term] || CORE_VOCAB_MAP[lowerTerm];
           if (staticTag) {
@@ -204,6 +208,18 @@ const App: React.FC = () => {
       // Refresh progress map to reflect new review dates
       const progressMap = await fetchUserVocabProgress(currentUser);
       if (progressMap) setUserVocabProgress(progressMap);
+      
+      // Refresh family stats to update mastery progress
+      refreshFamilyStats();
+  };
+
+  const refreshFamilyStats = async () => {
+    try {
+       const stats = await fetchFamilyStats();
+       setFamilyStats(stats);
+    } catch (e) {
+       console.error("Failed to refresh family stats", e);
+    }
   };
 
   const handleLogout = () => {
@@ -397,12 +413,14 @@ const App: React.FC = () => {
       isNowUnfamiliar ? [...prev, id] : prev.filter(x => x !== id)
     );
     await toggleWordStatusInSheet(id, isNowUnfamiliar);
+    refreshFamilyStats();
   };
 
   const handleIncrementMistake = async (id: string) => {
     const newCount = (mistakeCounts[id] || 0) + 1;
     setMistakeCounts(prev => ({ ...prev, [id]: newCount }));
     await updateWordMistakeCountInSheet(id, newCount);
+    refreshFamilyStats();
   };
 
   const handleAddMistakeQuestion = (q: QuizQuestion) => {
@@ -477,6 +495,7 @@ const App: React.FC = () => {
         // Server update (currently only supports marking as viewed, but we can call it anyway for marking "on")
         if (newState) {
             await markWordViewed(currentUser, wordIds!);
+            refreshFamilyStats();
         }
     }
   };
@@ -555,21 +574,25 @@ const App: React.FC = () => {
                 {/* Family Stats Section */}
                 {familyStats && (
                     <div className="mb-12">
-                        <FamilyLeaderboard stats={{
-                            ...familyStats,
-                            leaderboard: (familyStats.leaderboard || []).map(user => {
-                                const profile = userProfiles.find(p => p.id === user.username);
-                                if (profile) {
-                                    return {
-                                        ...user,
-                                        username: profile.name,
-                                        avatar: profile.avatar,
-                                        color: profile.color
-                                    };
-                                }
-                                return user;
-                            })
-                        }} />
+                        <FamilyLeaderboard 
+                            stats={{
+                                ...familyStats,
+                                leaderboard: (familyStats.leaderboard || []).map(user => {
+                                    const profile = userProfiles.find(p => p.id === user.username);
+                                    if (profile) {
+                                        return {
+                                            ...user,
+                                            username: profile.name,
+                                            avatar: profile.avatar,
+                                            color: profile.color
+                                        };
+                                    }
+                                    return user;
+                                })
+                            }} 
+                            grammarMap={grammarMap}
+                            currentUser={currentUser}
+                        />
                     </div>
                 )}
 
@@ -898,7 +921,11 @@ const App: React.FC = () => {
                <GrammarView 
                   mistakeQuestions={mistakeQuestions}
                   onUpdateMistakes={setMistakeQuestions}
-                  questionsMap={questionsMap} // Pass questions map!
+                  questionsMap={questionsMap}
+                  username={currentUser}
+                  grammarMap={grammarMap}
+                  onUpdateGrammarMap={setGrammarMap}
+                  onQuizComplete={refreshFamilyStats}
                />
             </div>
         );

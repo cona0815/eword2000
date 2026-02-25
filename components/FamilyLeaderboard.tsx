@@ -1,12 +1,15 @@
 
 import React from 'react';
-import { FamilyStats } from '../types';
+import { FamilyStats, GrammarMapData } from '../types';
+import { MOLLY_GRAMMAR_UNITS } from '../constants';
 
 interface FamilyLeaderboardProps {
   stats: FamilyStats;
+  grammarMap?: GrammarMapData;
+  currentUser?: string | null;
 }
 
-const FamilyLeaderboard: React.FC<FamilyLeaderboardProps> = ({ stats }) => {
+const FamilyLeaderboard: React.FC<FamilyLeaderboardProps> = ({ stats, grammarMap }) => {
   const { leaderboard = [], familyProgress } = stats;
   
   const totalWords = familyProgress?.totalWords || 2000;
@@ -15,6 +18,13 @@ const FamilyLeaderboard: React.FC<FamilyLeaderboardProps> = ({ stats }) => {
 
   const totalPct = Math.round((masteredWords / totalWords) * 100) || 0;
   const viewedPct = Math.round((viewedWords / totalWords) * 100) || 0;
+
+  // Calculate Grammar Progress (Current User Only)
+  const totalGrammarStars: number = MOLLY_GRAMMAR_UNITS.length * 3;
+  const collectedStars: number = grammarMap 
+    ? Object.keys(grammarMap).reduce((acc: number, key: string) => acc + (grammarMap[key]?.stars || 0), 0) 
+    : 0;
+  const grammarPct: number = Math.round((collectedStars / totalGrammarStars) * 100) || 0;
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -58,6 +68,20 @@ const FamilyLeaderboard: React.FC<FamilyLeaderboardProps> = ({ stats }) => {
                     ></div>
                 </div>
             </div>
+            {grammarMap && (
+                <div>
+                    <div className="flex justify-between text-xs font-bold mb-2">
+                        <span className="text-purple-400">我的文法地圖進度</span>
+                        <span>{collectedStars} / {totalGrammarStars} ⭐</span>
+                    </div>
+                    <div className="h-3 bg-white/10 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-purple-500 rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(168,85,247,0.5)]"
+                            style={{ width: `${grammarPct}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
           </div>
           
           <p className="mt-6 text-center text-sm text-slate-400 italic">

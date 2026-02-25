@@ -1,18 +1,28 @@
 
 import React, { useState, useEffect } from 'react';
 import { QuizQuestion, GrammarMapData, MollyGrammarUnit } from '../types';
-import { fetchGrammarMap, fetchGrammarQuestions, saveGrammarResult, fetchRemoteQuestions } from '../services/gasService';
+import { fetchGrammarQuestions, saveGrammarResult, fetchRemoteQuestions, syncQuestionsToSheet } from '../services/gasService';
 import { MOLLY_GRAMMAR_UNITS, GRAMMAR_QUIZ_QUESTIONS_PER_ROUND } from '../constants';
 
 interface GrammarViewProps {
   mistakeQuestions: QuizQuestion[];
   onUpdateMistakes: (updater: (prev: QuizQuestion[]) => QuizQuestion[]) => void;
   questionsMap?: Record<string, QuizQuestion[]>;
+  username: string | null;
+  grammarMap: GrammarMapData;
+  onUpdateGrammarMap: (updater: (prev: GrammarMapData) => GrammarMapData) => void;
+  onQuizComplete?: () => void;
 }
 
-const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMistakes }) => {
+const GrammarView: React.FC<GrammarViewProps> = ({ 
+  mistakeQuestions, 
+  onUpdateMistakes, 
+  username,
+  grammarMap,
+  onUpdateGrammarMap,
+  onQuizComplete
+}) => {
   const [viewState, setViewState] = useState<'MAP' | 'LEARN' | 'QUIZ' | 'RESULT' | 'MISTAKES'>('MAP');
-  const [grammarMap, setGrammarMap] = useState<GrammarMapData>({});
   const [remoteCounts, setRemoteCounts] = useState<Record<string, number>>({});
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMistakeReview, setIsMistakeReview] = useState(false);
@@ -27,16 +37,6 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
   const [score, setScore] = useState(0);
   const [showExplanation, setShowExplanation] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
-
-  const username = localStorage.getItem('juniorVocabUser');
-
-  const loadMap = async () => {
-    if (!username) return;
-    setLoading(true);
-    const map = await fetchGrammarMap(username);
-    if (map) setGrammarMap(map);
-    setLoading(false);
-  };
 
   const loadRemoteCounts = async () => {
     setIsSyncing(true);
@@ -57,6 +57,8 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
         const unitIdNum = unit.id.replace("unit", ""); // "unit1" -> "1"
         
         const unitQs = allQs.filter(q => {
+          if (!q || !q.question || !Array.isArray(q.options)) return false; // Basic validation
+          
           const qId = (q.wordId || "").toString().toLowerCase();
           const qUnit = (
             q.unit || 
@@ -102,10 +104,67 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
 
   useEffect(() => {
     if (username) {
-      loadMap();
       loadRemoteCounts();
     }
   }, [username]);
+
+  const handleSyncMistakes = async () => {
+    if (!username) return;
+    if (mistakeQuestions.length === 0) {
+      alert("目前沒有錯題需要同步！");
+      return;
+    }
+    
+    const confirmSync = window.confirm(`確定要將 ${mistakeQuestions.length} 題錯題同步到 Google Sheet 嗎？\n這將會覆蓋 Sheet 上舊的錯題紀錄。`);
+    if (!confirmSync) return;
+
+    setLoading(true);
+    try {
+      const success = await syncQuestionsToSheet(username, mistakeQuestions);
+      if (success) {
+        alert("同步成功！");
+      } else {
+        alert("同步失敗，請檢查網路或權限。");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("同步發生錯誤");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportForNotebookLM = () => {
+    if (mistakeQuestions.length === 0) {
+      alert("目前沒有錯題可以匯出！");
+      return;
+    }
+
+    let content = "# 文法錯題複習 (NotebookLM 專用)\n\n";
+    content += "以下是學生在練習過程中答錯的文法題目，請針對這些題目背後的文法觀念進行分析與複習。\n\n";
+
+    mistakeQuestions.forEach((q, idx) => {
+      content += `## 題目 ${idx + 1} (${q.grammarTag || '未分類'})\n`;
+      content += `**問題:** ${q.question}\n`;
+      content += `**選項:**\n`;
+      q.options.forEach((opt, i) => {
+        content += `- ${String.fromCharCode(65 + i)}. ${opt}\n`;
+      });
+      content += `**正確答案:** ${String.fromCharCode(65 + q.correctAnswerIndex)}\n`;
+      content += `**詳解:** ${q.explanation || '無'}\n\n`;
+      content += `---\n\n`;
+    });
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `grammar_mistakes_notebooklm_${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleUnitClick = async (unit: MollyGrammarUnit) => {
       setSelectedUnit(unit);
@@ -134,7 +193,12 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
         console.error("Failed to fetch unit questions", e);
       }
       
-      setUnitQuestions(finalQuestions.length > 0 ? finalQuestions : unit.questions);
+      // Filter invalid questions
+      const validQuestions = finalQuestions.filter(q => 
+        q && q.question && Array.isArray(q.options) && typeof q.correctAnswerIndex === 'number'
+      );
+
+      setUnitQuestions(validQuestions.length > 0 ? validQuestions : unit.questions);
       setLoading(false);
   };
 
@@ -288,7 +352,24 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
     }
 
     if (finalQuestions && finalQuestions.length > 0) {
-      setQuestions(finalQuestions);
+      // Filter out invalid questions
+      const validQuestions = finalQuestions.filter(q => 
+        q && 
+        q.question && 
+        Array.isArray(q.options) && 
+        q.options.length > 0 &&
+        typeof q.correctAnswerIndex === 'number' &&
+        q.correctAnswerIndex >= 0 &&
+        q.correctAnswerIndex < q.options.length
+      );
+
+      if (validQuestions.length === 0) {
+        alert('此單元題目格式有誤，無法載入。');
+        setLoading(false);
+        return;
+      }
+
+      setQuestions(validQuestions);
       setCurrentIndex(0);
       setAnswers({});
       setScore(0);
@@ -374,7 +455,7 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
     else if (percentage >= 80) stars = 2;
     else if (percentage >= 60) stars = 1;
 
-    setGrammarMap(prev => ({
+    onUpdateGrammarMap(prev => ({
         ...prev,
         [selectedUnit.id]: {
             highestScore: Math.max(prev[selectedUnit.id]?.highestScore || 0, score),
@@ -384,6 +465,7 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
 
     setViewState('RESULT');
     await saveGrammarResult(username, selectedUnit.id, score, stars);
+    if (onQuizComplete) onQuizComplete();
   };
 
   // --- Render Helpers ---
@@ -700,6 +782,25 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
 
   if (viewState === 'QUIZ') {
       const q = questions[currentIndex];
+      
+      if (!q || !q.options || !Array.isArray(q.options)) {
+        return (
+             <div className="max-w-2xl mx-auto animate-fadeIn text-center p-8 bg-white rounded-2xl shadow-xl">
+                <h3 className="text-xl font-bold text-red-500 mb-2">題目載入錯誤</h3>
+                <p className="text-slate-500 mb-4">此題目資料格式不正確，無法顯示。</p>
+                <div className="p-4 bg-slate-100 rounded-lg text-left text-xs font-mono mb-4 overflow-auto max-h-40">
+                    {JSON.stringify(q, null, 2)}
+                </div>
+                <button 
+                    onClick={handleNext} 
+                    className="px-6 py-2 bg-slate-800 text-white rounded-full font-bold hover:bg-slate-700"
+                >
+                    跳過此題
+                </button>
+             </div>
+        );
+      }
+
       return (
           <div className="max-w-2xl mx-auto animate-fadeIn">
               <div className="bg-white rounded-2xl shadow-xl border border-pink-100 overflow-hidden">
@@ -804,12 +905,28 @@ const GrammarView: React.FC<GrammarViewProps> = ({ mistakeQuestions, onUpdateMis
                       <span className="text-4xl">📕</span>
                       文法錯題集
                   </h2>
-                  <button 
-                      onClick={() => setViewState('MAP')}
-                      className="px-6 py-2 bg-white border-2 border-slate-300 text-slate-600 rounded-full font-bold hover:bg-slate-50 transition-all"
-                  >
-                      回地圖
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                        onClick={handleExportForNotebookLM}
+                        className="px-4 py-2 bg-purple-500 text-white rounded-full font-bold hover:bg-purple-600 transition-all shadow-md flex items-center gap-2 text-sm"
+                    >
+                        <span>🤖</span>
+                        NotebookLM 匯出
+                    </button>
+                    <button 
+                        onClick={handleSyncMistakes}
+                        className="px-4 py-2 bg-green-500 text-white rounded-full font-bold hover:bg-green-600 transition-all shadow-md flex items-center gap-2 text-sm"
+                    >
+                        <span>☁️</span>
+                        同步到試算表
+                    </button>
+                    <button 
+                        onClick={() => setViewState('MAP')}
+                        className="px-6 py-2 bg-white border-2 border-slate-300 text-slate-600 rounded-full font-bold hover:bg-slate-50 transition-all"
+                    >
+                        回地圖
+                    </button>
+                  </div>
               </div>
 
               {grammarMistakes.length === 0 ? (
