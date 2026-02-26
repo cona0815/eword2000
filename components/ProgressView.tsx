@@ -139,12 +139,12 @@ const ProgressView: React.FC<ProgressViewProps> = ({
                         {/* Reading Progress */}
                         <div className="mb-4">
                             <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-1">
-                                <span className="text-blue-600">總閱讀進度</span>
-                                <span className="text-blue-600">{viewedPct}%</span>
+                                <span className="text-emerald-600">總閱讀進度</span>
+                                <span className="text-emerald-600">{viewedPct}%</span>
                             </div>
-                            <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                            <div className="h-1.5 bg-emerald-100 rounded-full overflow-hidden">
                                 <div 
-                                    className="h-full bg-blue-500 rounded-full transition-all duration-1000"
+                                    className="h-full bg-emerald-500 rounded-full transition-all duration-1000"
                                     style={{ width: `${viewedPct}%` }}
                                 ></div>
                             </div>

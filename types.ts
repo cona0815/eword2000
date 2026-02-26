@@ -99,6 +99,7 @@ export interface GrammarMapData {
 
 export interface FamilyStats {
   leaderboard: {
+    id?: string; // User ID (e.g., 'Dad')
     username: string;
     avatar: string;
     quizCount: number;

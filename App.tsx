@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Word, QuizQuestion, AppView, DailyMission, UserVocabProgressMap, UserProfile, GrammarMapData } from './types';
+import { Word, QuizQuestion, AppView, DailyMission, UserVocabProgressMap, UserProfile, GrammarMapData, UserVocabProgress } from './types';
 import { VOCABULARY_LIST, CATEGORY_SORT_ORDER, CORE_VOCAB_MAP } from './constants';
 import WordCard from './components/WordCard';
 import FlashcardView from './components/FlashcardView';
@@ -571,26 +571,66 @@ const App: React.FC = () => {
                     </button>
                 </div>
 
+                {/* Personal Stats War Room */}
+                <div className="grid grid-cols-3 gap-4 mb-8">
+                    <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 flex flex-col items-center justify-center relative overflow-hidden group">
+                        <div className="absolute -right-4 -top-4 text-blue-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">↻</div>
+                        <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1 relative z-10">待複習</p>
+                        <p className="text-3xl font-black text-blue-600 relative z-10">
+                            {Object.values(userVocabProgress).filter((p: UserVocabProgress) => p.nextReviewDate && new Date(p.nextReviewDate) <= new Date()).length}
+                        </p>
+                    </div>
+                    <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex flex-col items-center justify-center relative overflow-hidden group">
+                        <div className="absolute -right-4 -top-4 text-amber-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">★</div>
+                        <p className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-1 relative z-10">已精熟</p>
+                        <p className="text-3xl font-black text-amber-500 relative z-10">
+                            {Object.values(userVocabProgress).filter((p: UserVocabProgress) => p.correctCount >= 2).length}
+                        </p>
+                    </div>
+                    <div className="bg-red-50 rounded-2xl p-4 border border-red-100 flex flex-col items-center justify-center relative overflow-hidden group">
+                        <div className="absolute -right-4 -top-4 text-red-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">×</div>
+                        <p className="text-xs font-bold text-red-400 uppercase tracking-wider mb-1 relative z-10">待消滅錯字</p>
+                        <p className="text-3xl font-black text-red-500 relative z-10">
+                            {Object.keys(mistakeCounts).reduce((acc, key) => acc + (mistakeCounts[key] > 0 ? 1 : 0), 0)}
+                        </p>
+                    </div>
+                </div>
+
                 {/* Family Stats Section */}
                 {familyStats && (
                     <div className="mb-12">
                         <FamilyLeaderboard 
                             stats={{
                                 ...familyStats,
-                                leaderboard: (familyStats.leaderboard || []).map(user => {
-                                    const profile = userProfiles.find(p => p.id === user.username);
-                                    if (profile) {
+                                leaderboard: userProfiles.map(profile => {
+                                    // Find existing stats for this user
+                                    const existingStats = (familyStats.leaderboard || []).find(
+                                        u => u.username === profile.id
+                                    );
+
+                                    if (existingStats) {
                                         return {
-                                            ...user,
+                                            ...existingStats,
+                                            id: profile.id,
                                             username: profile.name,
                                             avatar: profile.avatar,
                                             color: profile.color
                                         };
                                     }
-                                    return user;
-                                })
+
+                                    // Default stats for users with no progress
+                                    return {
+                                        id: profile.id,
+                                        username: profile.name,
+                                        avatar: profile.avatar,
+                                        color: profile.color,
+                                        quizCount: 0,
+                                        mistakeCount: 0,
+                                        masteryPct: 0,
+                                        title: '新手上路'
+                                    };
+                                }).sort((a, b) => b.masteryPct - a.masteryPct)
                             }} 
-                            grammarMap={grammarMap}
                             currentUser={currentUser}
                         />
                     </div>
