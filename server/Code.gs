@@ -62,6 +62,14 @@ const COL_USER_GRAMMAR = {
   STARS: 3
 };
 
+// 新增：文章閱讀紀錄表欄位 (User_Article_Progress)
+const USER_ARTICLE_HEADERS = ['Username', 'Article_ID', 'Read_Date'];
+const COL_USER_ARTICLE = {
+  USERNAME: 0,
+  ARTICLE_ID: 1,
+  READ_DATE: 2
+};
+
 // 指定的表頭名稱
 const VOCAB_HEADERS = ['id', '英文', '音標', '中譯', '例句', '翻譯', '分類', 'pastExamCount', 'syllables', 'tags', 'mistakeCount', 'coreTag'];
 const QUEST_HEADERS = ['wordId', 'wordTerm', 'question', 'options (json)', 'correctAnswerIndex', 'explanation', 'source', 'grammarTag'];
@@ -114,6 +122,12 @@ function setup() {
   const aSheet = ss.getSheetByName('Articles');
   if (aSheet.getLastRow() === 0) {
       aSheet.appendRow(ARTICLE_HEADERS);
+  }
+
+  // 7. 檢查 User_Article_Progress 表頭
+  const uaSheet = ss.getSheetByName('User_Article_Progress');
+  if (uaSheet.getLastRow() === 0) {
+      uaSheet.appendRow(USER_ARTICLE_HEADERS);
   }
 }
 
@@ -196,6 +210,11 @@ function doPost(e) {
     // 新增：儲存文章
     if (action === 'saveArticle') {
         return saveArticle(postData.article);
+    }
+
+    // 新增：標記文章已讀
+    if (action === 'markArticleRead') {
+        return markArticleRead(postData.username, postData.articleId);
     }
 
     // 新增：提交 SRS 評估結果
@@ -1014,6 +1033,24 @@ function saveGrammarResult(username, unit, score, stars) {
   }
 }
 
+function markArticleRead(username, articleId) {
+  if (!username || !articleId) return jsonOutput({ status: 'error', message: 'Missing parameters' });
+  
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('User_Article_Progress');
+  const data = sheet.getDataRange().getValues();
+  
+  // Check if already read
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][COL_USER_ARTICLE.USERNAME]) === username && String(data[i][COL_USER_ARTICLE.ARTICLE_ID]) === articleId) {
+      return jsonOutput({ status: 'success', message: 'Already marked' });
+    }
+  }
+  
+  sheet.appendRow([username, articleId, new Date()]);
+  return jsonOutput({ status: 'success' });
+}
+
 function getFamilyStats() {
   const ss = getSpreadsheet();
   
@@ -1021,41 +1058,110 @@ function getFamilyStats() {
   const vSheet = ss.getSheetByName('Vocabulary');
   const totalWords = Math.max(0, vSheet.getLastRow() - 1);
   
-  // 2. 讀取所有進度
+  // 2. 讀取單字進度
   const uvSheet = ss.getSheetByName('User_Vocab_Progress');
   const uvData = uvSheet.getDataRange().getValues();
   
-  const userScores = {}; // username -> score
-  const masteredSet = new Set(); // wordId
-  const viewedSet = new Set(); // wordId
+  const userScores = {}; // username -> score (quiz count)
+  const userViewedCounts = {}; // username -> viewed count
+  const userMasteredCounts = {}; // username -> mastered count
+  const userReviewNeededCounts = {}; // username -> review needed count
+  const userMistakeCounts = {}; // username -> mistake count
   
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   for (let i = 1; i < uvData.length; i++) {
     const row = uvData[i];
-    const username = String(row[COL_USER_VOCAB.USERNAME]);
-    const wordId = String(row[COL_USER_VOCAB.WORD_ID]);
-    const viewed = row[COL_USER_VOCAB.MAP_VIEWED] === true || String(row[COL_USER_VOCAB.MAP_VIEWED]).toLowerCase() === 'true';
-    const correctCount = parseInt(row[COL_USER_VOCAB.CORRECT_COUNT] || 0);
+    const u = String(row[COL_USER_VOCAB.USERNAME]);
     
-    // Leaderboard score (total correct answers)
-    userScores[username] = (userScores[username] || 0) + correctCount;
+    // Quiz Score (Correct Count)
+    const correct = parseInt(row[COL_USER_VOCAB.CORRECT_COUNT] || 0);
+    if (correct > 0) {
+        userScores[u] = (userScores[u] || 0) + correct;
+    }
     
-    // Global progress
-    if (viewed) viewedSet.add(wordId);
-    if (correctCount >= 2) masteredSet.add(wordId);
+    // Viewed Count
+    const viewed = row[COL_USER_VOCAB.MAP_VIEWED];
+    if (viewed === true || String(viewed).toLowerCase() === 'true' || viewed === 1) {
+        userViewedCounts[u] = (userViewedCounts[u] || 0) + 1;
+    }
+
+    // Mistake Count
+    const tested = parseInt(row[COL_USER_VOCAB.TESTED_COUNT] || 0);
+    const mistakes = Math.max(0, tested - correct);
+    if (mistakes > 0) {
+        userMistakeCounts[u] = (userMistakeCounts[u] || 0) + mistakes;
+    }
+    
+    // Mastered Count (Correct >= 2)
+    if (correct >= 2) {
+        userMasteredCounts[u] = (userMasteredCounts[u] || 0) + 1;
+    }
+
+    // Review Needed
+    const nextReview = row[COL_USER_VOCAB.NEXT_REVIEW_DATE];
+    if (nextReview && new Date(nextReview) <= today) {
+        userReviewNeededCounts[u] = (userReviewNeededCounts[u] || 0) + 1;
+    }
+  }
+
+  // 3. 讀取文法進度
+  const ugSheet = ss.getSheetByName('User_Grammar_Progress');
+  const ugData = ugSheet.getDataRange().getValues();
+  const userGrammarStats = {}; // username -> { units: count, stars: sum }
+  
+  for (let i = 1; i < ugData.length; i++) {
+      const u = String(ugData[i][COL_USER_GRAMMAR.USERNAME]);
+      const stars = parseInt(ugData[i][COL_USER_GRAMMAR.STARS] || 0);
+      
+      if (!userGrammarStats[u]) userGrammarStats[u] = { units: 0, stars: 0 };
+      userGrammarStats[u].units += 1;
+      userGrammarStats[u].stars += stars;
+  }
+
+  // 4. 讀取文章進度
+  const uaSheet = ss.getSheetByName('User_Article_Progress');
+  const uaData = uaSheet.getDataRange().getValues();
+  const userArticleStats = {}; // username -> read count
+  
+  for (let i = 1; i < uaData.length; i++) {
+      const u = String(uaData[i][COL_USER_ARTICLE.USERNAME]);
+      userArticleStats[u] = (userArticleStats[u] || 0) + 1;
   }
   
-  const leaderboard = Object.keys(userScores).map(name => ({
-    username: name,
-    score: userScores[name]
-  })).sort((a, b) => b.score - a.score);
+  // 5. 總文章數
+  const aSheet = ss.getSheetByName('Articles');
+  const totalArticles = Math.max(0, aSheet.getLastRow() - 1);
+  
+  const leaderboard = [];
+  const allUsers = new Set([...Object.keys(userScores), ...Object.keys(userViewedCounts)]);
+  
+  allUsers.forEach(user => {
+    const score = userScores[user] || 0;
+    const viewed = userViewedCounts[user] || 0;
+    const mastered = userMasteredCounts[user] || 0;
+    
+    // Calculate mastery percentage based on TOTAL words
+    const masteryPct = totalWords > 0 ? Math.round((mastered / totalWords) * 100) : 0;
+    
+    leaderboard.push({
+      username: user,
+      quizCount: score, // Using score as proxy for "Quiz Progress"
+      mistakeCount: userMistakeCounts[user] || 0,
+      masteryPct: masteryPct,
+      viewedWordsCount: viewed,
+      masteredCount: mastered,
+      reviewNeededCount: userReviewNeededCounts[user] || 0,
+      grammarStats: userGrammarStats[user] || { units: 0, stars: 0 },
+      articleStats: { readCount: userArticleStats[user] || 0 }
+    });
+  });
   
   return jsonOutput({
-    leaderboard: leaderboard,
-    familyProgress: {
-      totalWords: totalWords,
-      masteredWords: masteredSet.size,
-      viewedWords: viewedSet.size
-    }
+    totalWords: totalWords,
+    totalArticles: totalArticles,
+    leaderboard: leaderboard.sort((a, b) => b.quizCount - a.quizCount)
   });
 }
 

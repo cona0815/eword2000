@@ -554,6 +554,26 @@ export const markWordViewed = async (username: string, wordIds: string[]): Promi
   }
 };
 
+export const markArticleRead = async (username: string, articleId: string): Promise<boolean> => {
+  const url = getGasApiUrl();
+  if (!url) return false;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ 
+          action: 'markArticleRead', 
+          username: username, 
+          articleId: articleId 
+      })
+    });
+    if (isJsonResponse(response)) {
+      return (await response.json()).status === 'success';
+    }
+    return false;
+  } catch { return false; }
+};
+
 export const fetchGrammarMap = async (username: string): Promise<Record<string, { highestScore: number, stars: number }> | null> => {
   const url = getGasApiUrl();
   if (!url) return null;

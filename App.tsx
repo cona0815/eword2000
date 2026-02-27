@@ -110,21 +110,37 @@ const App: React.FC = () => {
       ]);
 
       setDailyMission(mission);
-      if (progressMap) setUserVocabProgress(progressMap);
+      if (progressMap) {
+          setUserVocabProgress(progressMap);
+          
+          // Sync independent user state from User_Vocab_Progress
+          const newMarked = Object.keys(progressMap).filter(id => progressMap[id].isMarked);
+          setMarkedUnfamiliar(newMarked);
+          
+          const newMistakes: Record<string, number> = {};
+          Object.keys(progressMap).forEach(id => {
+              const p = progressMap[id];
+              const m = Math.max(0, p.testedCount - p.correctCount);
+              if (m > 0) newMistakes[id] = m;
+          });
+          setMistakeCounts(newMistakes);
+      }
       setFamilyStats(fStats);
       setGrammarMap(gMap || {});
       
       setLoadingMission(false);
       
-      // Also fetch legacy progress if needed (optional, maybe for migration)
+      // Also fetch legacy progress for other fields (completedPages, etc.)
       const legacyProgress = await fetchUserProgress(username);
       if (legacyProgress) {
-        setMarkedUnfamiliar(legacyProgress.markedUnfamiliar || []);
+        // Only use legacy for fields NOT covered by User_Vocab_Progress
         setQuizCounts(legacyProgress.quizCounts || {});
         setLastQuestions(legacyProgress.lastQuestions || {});
         setMistakeQuestions(legacyProgress.mistakeQuestions || []);
-        setMistakeCounts(legacyProgress.mistakeCounts || {});
         setCompletedPages(legacyProgress.completedPages || []);
+        
+        // If User_Vocab_Progress was empty (new user on new system), maybe fallback? 
+        // But we prefer the new system.
       }
       setLoading(false);
   };
@@ -571,31 +587,6 @@ const App: React.FC = () => {
                     </button>
                 </div>
 
-                {/* Personal Stats War Room */}
-                <div className="grid grid-cols-3 gap-4 mb-8">
-                    <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 flex flex-col items-center justify-center relative overflow-hidden group">
-                        <div className="absolute -right-4 -top-4 text-blue-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">↻</div>
-                        <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-1 relative z-10">待複習</p>
-                        <p className="text-3xl font-black text-blue-600 relative z-10">
-                            {Object.values(userVocabProgress).filter((p: UserVocabProgress) => p.nextReviewDate && new Date(p.nextReviewDate) <= new Date()).length}
-                        </p>
-                    </div>
-                    <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex flex-col items-center justify-center relative overflow-hidden group">
-                        <div className="absolute -right-4 -top-4 text-amber-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">★</div>
-                        <p className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-1 relative z-10">已精熟</p>
-                        <p className="text-3xl font-black text-amber-500 relative z-10">
-                            {Object.values(userVocabProgress).filter((p: UserVocabProgress) => p.correctCount >= 2).length}
-                        </p>
-                    </div>
-                    <div className="bg-red-50 rounded-2xl p-4 border border-red-100 flex flex-col items-center justify-center relative overflow-hidden group">
-                        <div className="absolute -right-4 -top-4 text-red-100 text-6xl font-black opacity-50 group-hover:scale-110 transition-transform">×</div>
-                        <p className="text-xs font-bold text-red-400 uppercase tracking-wider mb-1 relative z-10">待消滅錯字</p>
-                        <p className="text-3xl font-black text-red-500 relative z-10">
-                            {Object.keys(mistakeCounts).reduce((acc, key) => acc + (mistakeCounts[key] > 0 ? 1 : 0), 0)}
-                        </p>
-                    </div>
-                </div>
-
                 {/* Family Stats Section */}
                 {familyStats && (
                     <div className="mb-12">
@@ -633,60 +624,6 @@ const App: React.FC = () => {
                             }} 
                             currentUser={currentUser}
                         />
-                    </div>
-                )}
-
-                {loadingMission ? (
-                    <div className="bg-white rounded-3xl p-12 text-center shadow-xl border border-slate-100">
-                        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-opacity-50 mx-auto mb-4"></div>
-                        <p className="text-slate-500 font-bold">正在從雲端分析您的學習數據...</p>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Mission 1: New Words */}
-                        <button 
-                            onClick={() => startMission('new')}
-                            className="relative overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
-                        >
-                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">🌱</div>
-                            <div className="relative z-10">
-                                <h3 className="text-2xl font-black mb-2">探索新領域</h3>
-                                <p className="opacity-90 mb-6 font-bold">學習新單字 (15題)</p>
-                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
-                                    {dailyMission?.newWords.length || 0} 個待學習
-                                </div>
-                            </div>
-                        </button>
-
-                        {/* Mission 2: Review */}
-                        <button 
-                            onClick={() => startMission('review')}
-                            className="relative overflow-hidden bg-gradient-to-br from-orange-500 to-red-500 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
-                        >
-                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">🚑</div>
-                            <div className="relative z-10">
-                                <h3 className="text-2xl font-black mb-2">搶救記憶</h3>
-                                <p className="opacity-90 mb-6 font-bold">複習易錯字 (10題)</p>
-                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
-                                    {dailyMission?.reviewWords.length || 0} 個需複習
-                                </div>
-                            </div>
-                        </button>
-
-                        {/* Mission 3: Mastery */}
-                        <button 
-                            onClick={() => startMission('mastery')}
-                            className="relative overflow-hidden bg-gradient-to-br from-blue-500 to-indigo-600 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
-                        >
-                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">💪</div>
-                            <div className="relative z-10">
-                                <h3 className="text-2xl font-black mb-2">鞏固神經</h3>
-                                <p className="opacity-90 mb-6 font-bold">維持手感 (5題)</p>
-                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
-                                    {dailyMission?.masteryWords.length || 0} 個精熟字
-                                </div>
-                            </div>
-                        </button>
                     </div>
                 )}
                 
@@ -945,13 +882,127 @@ const App: React.FC = () => {
         );
 
       case AppView.STATS:
+        const userStats = familyStats?.leaderboard.find(u => u.username === currentUser);
+        const totalWords = familyStats?.totalWords || 0;
+        const totalArticles = familyStats?.totalArticles || 0;
+
         return (
-           <div className="max-w-4xl mx-auto p-4">
-              <StatsChart 
-                 total={words.length} 
-                 unfamiliar={markedUnfamiliar.length} 
-                 mastered={words.length - markedUnfamiliar.length} 
-              />
+           <div className="max-w-4xl mx-auto p-4 animate-fadeIn">
+              <h2 className="text-3xl font-black text-slate-800 mb-6">學習統計與任務</h2>
+              
+              {/* 5-Card Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+                  {/* 1. Vocab Learning */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="text-3xl mb-2">📚</div>
+                      <h3 className="font-bold text-slate-600">單字學習</h3>
+                      <div className="text-2xl font-black text-slate-800 mt-2">
+                          {userStats?.viewedWordsCount || 0} <span className="text-sm text-slate-400">/ {totalWords}</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2 mt-3">
+                          <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${totalWords > 0 ? ((userStats?.viewedWordsCount || 0) / totalWords) * 100 : 0}%` }}></div>
+                      </div>
+                  </div>
+
+                  {/* 2. Vocab Quiz */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="text-3xl mb-2">🎯</div>
+                      <h3 className="font-bold text-slate-600">單字測驗 (精熟)</h3>
+                      <div className="text-2xl font-black text-slate-800 mt-2">
+                          {userStats?.masteredCount || 0} <span className="text-sm text-slate-400">/ {totalWords}</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2 mt-3">
+                          <div className="bg-emerald-500 h-2 rounded-full" style={{ width: `${totalWords > 0 ? ((userStats?.masteredCount || 0) / totalWords) * 100 : 0}%` }}></div>
+                      </div>
+                  </div>
+
+                  {/* 3. Grammar Learning */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="text-3xl mb-2">📖</div>
+                      <h3 className="font-bold text-slate-600">文法學習</h3>
+                      <div className="text-2xl font-black text-slate-800 mt-2">
+                          {userStats?.grammarStats?.units || 0} <span className="text-sm text-slate-400">單元</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2">已閱讀單元數</p>
+                  </div>
+
+                  {/* 4. Grammar Quiz */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="text-3xl mb-2">⭐</div>
+                      <h3 className="font-bold text-slate-600">文法測驗</h3>
+                      <div className="text-2xl font-black text-slate-800 mt-2">
+                          {userStats?.grammarStats?.stars || 0} <span className="text-sm text-slate-400">星星</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2">累積獲得星星數</p>
+                  </div>
+
+                  {/* 5. AI Articles */}
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div className="text-3xl mb-2">🤖</div>
+                      <h3 className="font-bold text-slate-600">AI 文章/題庫</h3>
+                      <div className="text-2xl font-black text-slate-800 mt-2">
+                          {userStats?.articleStats?.readCount || 0} <span className="text-sm text-slate-400">/ {totalArticles}</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-2 mt-3">
+                          <div className="bg-purple-500 h-2 rounded-full" style={{ width: `${totalArticles > 0 ? ((userStats?.articleStats?.readCount || 0) / totalArticles) * 100 : 0}%` }}></div>
+                      </div>
+                  </div>
+              </div>
+
+              <h3 className="text-xl font-bold text-slate-700 mb-4">每日任務</h3>
+              {loadingMission ? (
+                    <div className="bg-white rounded-3xl p-12 text-center shadow-xl border border-slate-100">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-opacity-50 mx-auto mb-4"></div>
+                        <p className="text-slate-500 font-bold">正在從雲端分析您的學習數據...</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Mission 1: New Words */}
+                        <button 
+                            onClick={() => startMission('new')}
+                            className="relative overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
+                        >
+                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">🌱</div>
+                            <div className="relative z-10">
+                                <h3 className="text-2xl font-black mb-2">探索新領域</h3>
+                                <p className="opacity-90 mb-6 font-bold">學習新單字 (15題)</p>
+                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
+                                    {dailyMission?.newWords.length || 0} 個待學習
+                                </div>
+                            </div>
+                        </button>
+
+                        {/* Mission 2: Review */}
+                        <button 
+                            onClick={() => startMission('review')}
+                            className="relative overflow-hidden bg-gradient-to-br from-orange-500 to-red-500 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
+                        >
+                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">🚑</div>
+                            <div className="relative z-10">
+                                <h3 className="text-2xl font-black mb-2">搶救記憶</h3>
+                                <p className="opacity-90 mb-6 font-bold">複習易錯字 (10題)</p>
+                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
+                                    {dailyMission?.reviewWords.length || 0} 個需複習
+                                </div>
+                            </div>
+                        </button>
+
+                        {/* Mission 3: Mastery */}
+                        <button 
+                            onClick={() => startMission('mastery')}
+                            className="relative overflow-hidden bg-gradient-to-br from-blue-500 to-indigo-600 text-white p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 group text-left"
+                        >
+                            <div className="absolute top-0 right-0 p-4 opacity-20 text-8xl font-black group-hover:scale-110 transition-transform">💪</div>
+                            <div className="relative z-10">
+                                <h3 className="text-2xl font-black mb-2">鞏固神經</h3>
+                                <p className="opacity-90 mb-6 font-bold">維持手感 (5題)</p>
+                                <div className="inline-block bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg font-bold text-sm">
+                                    {dailyMission?.masteryWords.length || 0} 個精熟字
+                                </div>
+                            </div>
+                        </button>
+                    </div>
+                )}
            </div>
         );
       
@@ -999,7 +1050,7 @@ const App: React.FC = () => {
         );
 
       case AppView.ARTICLES:
-        return <ArticleList onBack={() => setView(AppView.DASHBOARD)} />;
+        return <ArticleList onBack={() => setView(AppView.DASHBOARD)} currentUser={currentUser} />;
 
       case AppView.QUIZ:
         return (

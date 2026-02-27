@@ -98,17 +98,29 @@ export interface GrammarMapData {
 }
 
 export interface FamilyStats {
+  totalWords: number;
+  totalArticles: number;
   leaderboard: {
     id?: string; // User ID (e.g., 'Dad')
     username: string;
-    avatar: string;
+    avatar?: string;
     quizCount: number;
     mistakeCount: number;
     masteryPct: number;
-    title: string;
-    color: string;
+    viewedWordsCount: number;
+    reviewNeededCount: number;
+    masteredCount: number;
+    title?: string;
+    color?: string;
+    grammarStats: {
+      units: number;
+      stars: number;
+    };
+    articleStats: {
+      readCount: number;
+    };
   }[];
-  familyProgress: {
+  familyProgress?: {
     totalWords: number;
     masteredWords: number;
     viewedWords: number;

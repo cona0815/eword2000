@@ -43,16 +43,34 @@ const FamilyLeaderboard: React.FC<FamilyLeaderboardProps> = ({ stats, currentUse
 
                 <div className="w-full grid grid-cols-2 gap-4 text-left">
                   <div className="bg-slate-50 p-3 rounded-2xl">
-                      <p className="text-[10px] font-black text-slate-400 uppercase">本週測驗</p>
-                      <p className="text-lg font-black text-slate-700">{user.quizCount}</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase">單字</p>
+                      <p className="text-lg font-black text-slate-700">{user.viewedWordsCount || 0}</p>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-2xl">
-                      <p className="text-[10px] font-black text-slate-400 uppercase">精熟度</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase">測驗</p>
                       <p className="text-lg font-black text-slate-700">{user.masteryPct}%</p>
                   </div>
                 </div>
+
+                {/* Personal Stats for Current User */}
+                {isCurrentUser && (
+                    <div className="mt-4 w-full grid grid-cols-3 gap-2">
+                        <div className="bg-blue-50 p-2 rounded-xl text-center border border-blue-100">
+                            <p className="text-[10px] font-bold text-blue-400 uppercase">待複習</p>
+                            <p className="text-sm font-black text-blue-600">{user.reviewNeededCount || 0}</p>
+                        </div>
+                        <div className="bg-amber-50 p-2 rounded-xl text-center border border-amber-100">
+                            <p className="text-[10px] font-bold text-amber-400 uppercase">已精熟</p>
+                            <p className="text-sm font-black text-amber-500">{user.masteredCount || 0}</p>
+                        </div>
+                        <div className="bg-red-50 p-2 rounded-xl text-center border border-red-100">
+                            <p className="text-[10px] font-bold text-red-400 uppercase">待消滅</p>
+                            <p className="text-sm font-black text-red-500">{user.mistakeCount || 0}</p>
+                        </div>
+                    </div>
+                )}
                 
-                {user.mistakeCount > 0 && (
+                {!isCurrentUser && user.mistakeCount > 0 && (
                   <div className="mt-4 w-full bg-red-50 p-3 rounded-2xl flex items-center justify-between">
                       <span className="text-[10px] font-black text-red-400 uppercase">消滅錯字</span>
                       <span className="text-sm font-black text-red-600">+{user.mistakeCount}</span>

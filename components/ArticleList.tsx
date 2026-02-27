@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Article } from '../types';
-import { fetchArticles } from '../services/gasService';
+import { fetchArticles, markArticleRead } from '../services/gasService';
 import { playGeminiTts } from '../services/geminiService';
 
 interface ArticleListProps {
   onBack: () => void;
+  currentUser: string;
 }
 
-const ArticleList: React.FC<ArticleListProps> = ({ onBack }) => {
+const ArticleList: React.FC<ArticleListProps> = ({ onBack, currentUser }) => {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -40,7 +41,13 @@ const ArticleList: React.FC<ArticleListProps> = ({ onBack }) => {
   };
 
   const toggleExpand = (id: string) => {
-    setExpandedId(expandedId === id ? null : id);
+    if (expandedId !== id) {
+        setExpandedId(id);
+        // Mark as read
+        markArticleRead(currentUser, id);
+    } else {
+        setExpandedId(null);
+    }
   };
 
   return (
