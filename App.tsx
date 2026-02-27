@@ -277,6 +277,45 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [markedUnfamiliar, quizCounts, lastQuestions, mistakeQuestions, mistakeCounts, completedPages, loading, currentUser]);
 
+  // Auto-Sync Legacy Progress (Completed Pages) to New System (User_Vocab_Progress)
+  useEffect(() => {
+      if (!currentUser || words.length === 0 || completedPages.length === 0) return;
+      
+      const timer = setTimeout(() => {
+          const idsToSync: string[] = [];
+          
+          completedPages.forEach(pageKey => {
+              const [cat, pageStr] = pageKey.split('-');
+              const page = parseInt(pageStr);
+              if (cat && !isNaN(page)) {
+                   const catWords = words.filter(w => w.category === cat);
+                   const start = (page - 1) * ITEMS_PER_PAGE;
+                   const end = Math.min(page * ITEMS_PER_PAGE, catWords.length);
+                   
+                   const pageWords = catWords.slice(start, end);
+                   // Filter out words that are ALREADY marked as viewed in the new system
+                   const missingWords = pageWords.filter(w => !userVocabProgress[w.id]?.mapViewed);
+                   
+                   if (missingWords.length > 0) {
+                       idsToSync.push(...missingWords.map(w => w.id));
+                   }
+              }
+          });
+          
+          if (idsToSync.length > 0) {
+              console.log(`Auto-syncing ${idsToSync.length} words from legacy completed pages...`);
+              markWordViewed(currentUser, idsToSync).then(() => {
+                  refreshFamilyStats();
+                  fetchUserVocabProgress(currentUser).then(p => {
+                      if(p) setUserVocabProgress(prev => ({...prev, ...p}));
+                  });
+              });
+          }
+      }, 3000); // 3s delay to ensure initial data is fully loaded
+
+      return () => clearTimeout(timer);
+  }, [currentUser, words, completedPages, userVocabProgress]);
+
   // Derived Data: Grouped Categories
   const categories = useMemo(() => {
     const cats = new Set(words.map(w => w.category).filter(Boolean));
