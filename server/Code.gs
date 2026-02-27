@@ -1,6 +1,6 @@
 
 // ----------------------------------------------------------------
-// Google Apps Script (GAS) 後端程式碼 - v4.3 Robust Column Detection
+// Google Apps Script (GAS) 後端程式碼 - v4.6 Safe DataRange
 // ----------------------------------------------------------------
 
 // 定義試算表欄位對應 (Vocabulary)
@@ -83,58 +83,49 @@ function setup() {
   const ss = getSpreadsheet();
   
   // 1. 確保必要的工作表存在
-  const sheets = ['Vocabulary', 'Questions', 'UserProgress', 'User_Vocab_Progress', 'Grammar_Questions', 'User_Grammar_Progress', 'Articles', 'DebugLog'];
+  const sheets = ['Vocabulary', 'Questions', 'UserProgress', 'User_Vocab_Progress', 'Grammar_Questions', 'User_Grammar_Progress', 'Articles', 'User_Article_Progress', 'DebugLog'];
   sheets.forEach(name => {
     if (!ss.getSheetByName(name)) ss.insertSheet(name);
   });
   
-  // 2. 檢查 Vocabulary 表頭
-  const vSheet = ss.getSheetByName('Vocabulary');
-  if (vSheet.getLastRow() === 0) {
-      vSheet.appendRow(VOCAB_HEADERS);
-  }
+  // Helper to ensure columns
+  const ensureCols = (sheetName, headers, minCols) => {
+      const sheet = ss.getSheetByName(sheetName);
+      if (sheet.getLastRow() === 0) {
+          sheet.appendRow(headers);
+      }
+      if (sheet.getMaxColumns() < minCols) {
+          sheet.insertColumnsAfter(sheet.getMaxColumns(), minCols - sheet.getMaxColumns());
+      }
+  };
+
+  // 2. 檢查各表結構
+  ensureCols('Vocabulary', VOCAB_HEADERS, 12);
   
-  // 3. 檢查 Questions 表頭
+  // Questions Special Handling for Tag
   const qSheet = ss.getSheetByName('Questions');
   if (qSheet.getLastRow() === 0) {
       qSheet.appendRow(QUEST_HEADERS);
   } else {
-      // Check if tag column exists
       const lastCol = qSheet.getLastColumn();
       if (lastCol < 8) {
          qSheet.getRange(1, 8).setValue('grammarTag');
       }
   }
-
-  // 4. 檢查 User_Vocab_Progress 表頭
-  const uvSheet = ss.getSheetByName('User_Vocab_Progress');
-  if (uvSheet.getLastRow() === 0) {
-      uvSheet.appendRow(USER_VOCAB_HEADERS);
+  if (qSheet.getMaxColumns() < 8) {
+      qSheet.insertColumnsAfter(qSheet.getMaxColumns(), 8 - qSheet.getMaxColumns());
   }
 
-  // 5. 檢查 User_Grammar_Progress 表頭
-  const ugSheet = ss.getSheetByName('User_Grammar_Progress');
-  if (ugSheet.getLastRow() === 0) {
-      ugSheet.appendRow(USER_GRAMMAR_HEADERS);
-  }
-
-  // 6. 檢查 Articles 表頭
-  const aSheet = ss.getSheetByName('Articles');
-  if (aSheet.getLastRow() === 0) {
-      aSheet.appendRow(ARTICLE_HEADERS);
-  }
-
-  // 7. 檢查 User_Article_Progress 表頭
-  const uaSheet = ss.getSheetByName('User_Article_Progress');
-  if (uaSheet.getLastRow() === 0) {
-      uaSheet.appendRow(USER_ARTICLE_HEADERS);
-  }
+  ensureCols('User_Vocab_Progress', USER_VOCAB_HEADERS, 7);
+  ensureCols('User_Grammar_Progress', USER_GRAMMAR_HEADERS, 4);
+  ensureCols('Articles', ARTICLE_HEADERS, 5);
+  ensureCols('User_Article_Progress', USER_ARTICLE_HEADERS, 3);
 }
 
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : 'unknown';
-    setup();
+    // setup(); // 暫時移除 setup 以避免每次讀取都觸發寫入權限檢查或延遲
     
     if (action === 'getVocabulary') {
       return getVocabulary();
@@ -169,14 +160,440 @@ function doGet(e) {
     if (action === 'getFamilyStats') {
       return getFamilyStats();
     }
+    // 新增：測試連線
+    if (action === 'test') {
+      return jsonOutput({ status: 'ok', message: 'Connection successful', time: new Date().toISOString() });
+    }
     
-    return ContentService.createTextOutput(JSON.stringify({ status: 'ok', message: 'API works', action: action }))
+    return ContentService.createTextOutput(JSON.stringify({ status: 'ok', message: 'API works', version: 'v4.6', action: action }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function doPost(e) {
+  const jsonResponse = (data) => ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+
+  try {
+    if (!e || !e.postData) return jsonResponse({ status: 'error', message: 'No data' });
+    
+    const postData = JSON.parse(e.postData.contents);
+    const action = postData.action;
+    
+    // setup(); // 僅在寫入操作時執行 setup 比較保險
+    if (action.startsWith('save') || action.startsWith('update') || action.startsWith('submit') || action.startsWith('add')) {
+        setup();
+    }
+    
+    const ss = getSpreadsheet();
+
+    // 新增：提交測驗結果
+    if (action === 'submitQuizResult') {
+        return submitQuizResult(postData.username, postData.results);
+    }
+
+    // 新增：標記單字已讀 (Map Viewed)
+    if (action === 'markWordViewed') {
+        return markWordViewed(postData.username, postData.wordIds);
+    }
+
+    // 新增：儲存文法測驗結果
+    if (action === 'saveGrammarResult') {
+        return saveGrammarResult(postData.username, postData.unit, postData.score, postData.stars);
+    }
+
+    // 新增：儲存文章
+    if (action === 'saveArticle') {
+        return saveArticle(postData.article);
+    }
+
+    // 新增：標記文章已讀
+    if (action === 'markArticleRead') {
+        return markArticleRead(postData.username, postData.articleId);
+    }
+
+    // 新增：提交 SRS 評估結果
+    if (action === 'submitSrsResult') {
+        return submitSrsResult(postData.username, postData.wordId, postData.rating);
+    }
+
+    if (action === 'uploadVocabulary') {
+      let sheet = ss.getSheetByName('Vocabulary');
+      const words = postData.words;
+      if (!words || !Array.isArray(words)) return jsonResponse({ status: 'error', message: 'Invalid words data' });
+      const rows = words.map(w => {
+        let fullMeaning = w.meaning || '';
+        if (w.partOfSpeech && !fullMeaning.startsWith(w.partOfSpeech)) fullMeaning = `${w.partOfSpeech} ${fullMeaning}`;
+        const row = new Array(12);
+        row[0] = w.id || ''; row[1] = w.term || ''; row[2] = w.phonetic || ''; row[3] = fullMeaning;
+        row[4] = w.example || ''; row[5] = w.exampleTranslation || ''; row[6] = w.category || '綜合';
+        row[7] = w.pastExamCount || 0; row[8] = w.syllables || ''; row[9] = w.tags || '';
+        row[10] = w.mistakeCount || 0; row[11] = w.coreTag || '';
+        return row;
+      });
+      const lastRow = sheet.getLastRow();
+      if (rows.length > 0) sheet.getRange(lastRow + 1, 1, rows.length, 12).setValues(rows);
+      return jsonResponse({ status: 'success', added: rows.length });
+    }
+
+    if (action === 'saveQuestions' || action === 'syncQuestions') {
+        let sheet = ss.getSheetByName('Questions');
+        const questions = postData.questions; 
+        if (!questions || !Array.isArray(questions)) return jsonResponse({ status: 'error', message: 'Invalid questions data' });
+
+        const lastRow = sheet.getLastRow();
+        const existingQuestions = new Set();
+        if (lastRow > 1) {
+            // Check Col C (Index 2) for standard format questions
+            const existingData = sheet.getRange(2, 3, lastRow - 1, 1).getValues();
+            for (let i = 0; i < existingData.length; i++) {
+                const qText = String(existingData[i][0]).trim();
+                if (qText) existingQuestions.add(qText);
+            }
+        }
+
+        const rows = [];
+        let addedCount = 0;
+        let skippedCount = 0;
+
+        questions.forEach(q => {
+            const qText = String(q.question || '').trim();
+            if (!qText) return;
+            if (existingQuestions.has(qText)) { skippedCount++; return; }
+
+            const row = new Array(8);
+            row[0] = q.wordId || ('auto_' + new Date().getTime());
+            row[1] = q.wordTerm || '';
+            row[2] = q.question || '';
+            row[3] = JSON.stringify(q.options || []);
+            row[4] = q.correctAnswerIndex;
+            row[5] = q.explanation || '';
+            row[6] = q.source || 'AI';
+            row[7] = q.grammarTag || '';
+            
+            rows.push(row);
+            existingQuestions.add(qText); 
+            addedCount++;
+        });
+
+        if (rows.length > 0) sheet.getRange(lastRow + 1, 1, rows.length, 8).setValues(rows);
+        return jsonResponse({ status: 'success', added: addedCount, message: `成功新增 ${addedCount} 題，忽略 ${skippedCount} 題重複。` });
+    }
+
+    if (action === 'clearVocabulary') {
+      let sheet = ss.getSheetByName('Vocabulary');
+      if (sheet && sheet.getMaxRows() > 1) {
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) sheet.deleteRows(2, lastRow - 1);
+      }
+      return jsonResponse({ status: 'success' });
+    }
+
+    if (action === 'saveUserProgress') {
+      let sheet = ss.getSheetByName('UserProgress');
+      const userId = postData.userId;
+      const progressStr = JSON.stringify(postData.data);
+      const now = new Date();
+      const data = sheet.getDataRange().getValues();
+      let rowIndex = -1;
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === userId) { rowIndex = i + 1; break; }
+      }
+      if (rowIndex > 0) {
+        sheet.getRange(rowIndex, 2).setValue(progressStr);
+        sheet.getRange(rowIndex, 3).setValue(now);
+      } else {
+        sheet.appendRow([userId, progressStr, now]);
+      }
+      return jsonResponse({ status: 'success' });
+    }
+
+    if (action === 'addWord') {
+      let sheet = ss.getSheetByName('Vocabulary');
+      const w = postData.word;
+      const newId = String(new Date().getTime());
+      let fullMeaning = w.meaning || '';
+      if (w.partOfSpeech && !fullMeaning.startsWith(w.partOfSpeech)) fullMeaning = `${w.partOfSpeech} ${fullMeaning}`;
+      const row = new Array(12);
+      row[0] = newId; row[1] = w.term || ''; row[2] = w.phonetic || ''; row[3] = fullMeaning;
+      row[4] = w.example || ''; row[5] = w.exampleTranslation || ''; row[6] = w.category || '綜合';
+      row[7] = 0; row[8] = w.syllables || ''; row[9] = ''; row[10] = w.mistakeCount || 0; row[11] = w.coreTag || '';
+      sheet.appendRow(row);
+      return jsonResponse({ status: 'success', id: newId });
+    }
+    
+    if (action === 'updateWordStatus') {
+       let sheet = ss.getSheetByName('Vocabulary');
+       const wordId = postData.wordId;
+       const isUnfamiliar = postData.isUnfamiliar;
+       const data = sheet.getDataRange().getValues();
+       for(let i=1; i<data.length; i++) {
+         if(String(data[i][0]) === String(wordId)) {
+           const currentTags = String(data[i][9] || '');
+           let newTags = currentTags;
+           if (isUnfamiliar) {
+               if (!currentTags.includes('unfamiliar')) newTags = currentTags ? currentTags + ',unfamiliar' : 'unfamiliar';
+           } else {
+               newTags = currentTags.replace(/unfamiliar/g, '').replace(/,,/g, ',').replace(/^,|,$/g, '');
+           }
+           sheet.getRange(i+1, 10).setValue(newTags);
+           return jsonResponse({ status: 'success', newTags: newTags });
+         }
+       }
+       return jsonResponse({ status: 'not_found' });
+    }
+
+    if (action === 'updateWordMistakeCount') {
+       let sheet = ss.getSheetByName('Vocabulary');
+       const wordId = postData.wordId;
+       const count = parseInt(postData.count);
+       const data = sheet.getDataRange().getValues();
+       for(let i=1; i<data.length; i++) {
+         if(String(data[i][0]) === String(wordId)) {
+           sheet.getRange(i+1, 11).setValue(isNaN(count) ? 0 : count);
+           return jsonResponse({ status: 'success', count: count });
+         }
+       }
+       return jsonResponse({ status: 'not_found' });
+    }
+
+    if (action === 'updateWordExample') {
+       let sheet = ss.getSheetByName('Vocabulary');
+       const data = sheet.getDataRange().getValues();
+       for(let i=1; i<data.length; i++) {
+         if(String(data[i][0]) === postData.wordId) {
+           sheet.getRange(i+1, 5).setValue(postData.example);
+           sheet.getRange(i+1, 6).setValue(postData.translation);
+           return jsonResponse({ status: 'success' });
+         }
+       }
+       return jsonResponse({ status: 'not_found' });
+    }
+
+    if (action === 'updateWordDetails') {
+       let sheet = ss.getSheetByName('Vocabulary');
+       const w = postData.word;
+       const data = sheet.getDataRange().getValues();
+       for(let i=1; i<data.length; i++) {
+         if(String(data[i][0]) === postData.wordId) {
+           let fullMeaning = w.meaning || '';
+           if (w.partOfSpeech && !fullMeaning.startsWith(w.partOfSpeech)) fullMeaning = `${w.partOfSpeech} ${fullMeaning}`;
+           const rowIdx = i + 1;
+           if (w.phonetic) sheet.getRange(rowIdx, 3).setValue(w.phonetic);
+           if (fullMeaning) sheet.getRange(rowIdx, 4).setValue(fullMeaning);
+           if (w.example) sheet.getRange(rowIdx, 5).setValue(w.example);
+           if (w.exampleTranslation) sheet.getRange(rowIdx, 6).setValue(w.exampleTranslation);
+           if (w.syllables) sheet.getRange(rowIdx, 9).setValue(w.syllables);
+           if (w.category) sheet.getRange(rowIdx, 7).setValue(w.category);
+           if (w.mistakeCount !== undefined) sheet.getRange(rowIdx, 11).setValue(w.mistakeCount);
+           if (w.coreTag !== undefined) sheet.getRange(rowIdx, 12).setValue(w.coreTag);
+           return jsonResponse({ status: 'success' });
+         }
+       }
+       return jsonResponse({ status: 'not_found' });
+    }
+
+    if (action === 'removeDuplicateWords') {
+      let sheet = ss.getSheetByName('Vocabulary');
+      const lastRow = sheet.getLastRow();
+      if (lastRow <= 1) return jsonResponse({ status: 'success', removed: 0 });
+      const range = sheet.getRange(2, 1, lastRow - 1, 12);
+      const values = range.getValues();
+      const uniqueRows = [];
+      const seen = new Set();
+      let removedCount = 0;
+      values.forEach(row => {
+          const term = String(row[1]).trim().toLowerCase();
+          const meaning = String(row[3]).trim();
+          const key = term + '_' + meaning;
+          if (!seen.has(key)) { seen.add(key); uniqueRows.push(row); } 
+          else { removedCount++; }
+      });
+      if (removedCount > 0) {
+          range.clearContent();
+          if (uniqueRows.length > 0) sheet.getRange(2, 1, uniqueRows.length, 12).setValues(uniqueRows);
+      }
+      return jsonResponse({ status: 'success', removed: removedCount });
+    }
+
+    return jsonResponse({ status: 'error', message: 'Unknown action' });
+
+  } catch (e) {
+    return jsonResponse({ status: 'error', message: e.toString() });
+  }
+}
+
+function getArticles() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('Articles');
+  if (!sheet) return jsonOutput([]);
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return jsonOutput([]);
+  const range = sheet.getRange(2, 1, lastRow - 1, 5);
+  const rows = range.getDisplayValues();
+  const result = rows.map(row => ({
+    id: String(row[0]),
+    title: String(row[1]),
+    english: String(row[2]),
+    chinese: String(row[3]),
+    createdAt: String(row[4])
+  }));
+  return jsonOutput(result);
+}
+
+function saveArticle(article) {
+  if (!article) return jsonOutput({ status: 'error', message: 'No article data' });
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('Articles');
+  const newRow = [
+    article.id || ('art_' + new Date().getTime()),
+    article.title || 'Untitled',
+    article.english || '',
+    article.chinese || '',
+    new Date()
+  ];
+  sheet.appendRow(newRow);
+  return jsonOutput({ status: 'success' });
+}
+
+// ---------------- 讀取邏輯 (Safe DataRange) ----------------
+
+function getVocabulary() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('Vocabulary');
+  if (!sheet) return jsonOutput([]);
+  
+  // 使用 getDataRange() 避免範圍錯誤
+  const data = sheet.getDataRange().getDisplayValues();
+  
+  // 至少要有標題列 (1 row)
+  if (data.length <= 1) return jsonOutput([]); 
+  
+  // 移除標題列
+  const rows = data.slice(1);
+  
+  const result = rows.map(row => {
+      // 安全取得欄位值，若該列長度不足則回傳空字串
+      const getVal = (idx) => (idx < row.length ? String(row[idx]) : '');
+      
+      const fullMeaning = getVal(3).trim();
+      let partOfSpeech = '';
+      let meaning = fullMeaning;
+      const posMatch = fullMeaning.match(/^(\([a-z]+\.\)|（[a-z]+\.）)\s*(.*)/i);
+      if (posMatch) { partOfSpeech = posMatch[1]; meaning = posMatch[2]; }
+      
+      return {
+        id: getVal(0).trim(),
+        term: getVal(1).trim(),
+        phonetic: getVal(2).trim(),
+        partOfSpeech: partOfSpeech,
+        meaning: meaning,
+        example: getVal(4),
+        exampleTranslation: getVal(5),
+        category: getVal(6) || '綜合',
+        level: '1200',
+        pastExamCount: parseInt(getVal(7) || '0'),
+        syllables: getVal(8).trim(),
+        tags: getVal(9).trim(),
+        mistakeCount: parseInt(getVal(10) || '0'),
+        coreTag: getVal(11)
+      };
+  });
+  return jsonOutput(result);
+}
+
+function getQuestions() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('Questions');
+  if (!sheet) return jsonOutput({});
+  
+  const data = sheet.getDataRange().getDisplayValues();
+  if (data.length <= 1) return jsonOutput({});
+
+  const rows = data.slice(1);
+  const resultMap = {};
+
+  rows.forEach(row => {
+      const getVal = (idx) => (idx < row.length ? String(row[idx]) : '');
+      const wordId = getVal(0);
+      if (!wordId) return;
+
+      // --- Column Shift Detection ---
+      let questionText = "";
+      let optionsJson = "[]";
+      let ansIdx = 0;
+      let explanation = "";
+      let source = "";
+      let tag = "";
+      let term = "";
+
+      const col2 = getVal(2).trim();
+      const col3 = getVal(3).trim();
+
+      if (col2.startsWith('[') && col2.endsWith(']')) {
+          // Shifted Format
+          questionText = getVal(1);
+          optionsJson = col2;
+          ansIdx = parseInt(getVal(3));
+          explanation = getVal(4);
+          source = getVal(6);
+          tag = getVal(7);
+      } else {
+          // Standard Format
+          term = getVal(1);
+          questionText = getVal(2);
+          optionsJson = col3;
+          ansIdx = parseInt(getVal(4));
+          explanation = getVal(5);
+          source = getVal(6);
+          tag = getVal(7);
+      }
+
+      let options = [];
+      try {
+          options = JSON.parse(optionsJson);
+      } catch (e) {
+          options = [];
+      }
+
+      const q = {
+          wordId: wordId,
+          wordTerm: term,
+          question: questionText,
+          options: options,
+          correctAnswerIndex: isNaN(ansIdx) ? 0 : ansIdx,
+          explanation: explanation,
+          source: source,
+          grammarTag: tag
+      };
+
+      if (!resultMap[wordId]) {
+          resultMap[wordId] = [];
+      }
+      resultMap[wordId].push(q);
+  });
+
+  return jsonOutput(resultMap);
+}
+
+function getUserProgress(userId) {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName('UserProgress');
+  if (!sheet) return jsonOutput(null);
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === userId) {
+      try { return jsonOutput(JSON.parse(data[i][1])); } catch (e) { return jsonOutput(null); }
+    }
+  }
+  return jsonOutput(null);
+}
+
+function jsonOutput(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
@@ -469,29 +886,38 @@ function getVocabulary() {
   if (!sheet) return jsonOutput([]);
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return jsonOutput([]); 
-  const range = sheet.getRange(2, 1, lastRow - 1, 12);
+  
+  // Robust Column Reading
+  const lastCol = sheet.getLastColumn();
+  const numColsToRead = Math.min(Math.max(lastCol, 1), 12); // Read at least 1, max 12
+  
+  const range = sheet.getRange(2, 1, lastRow - 1, numColsToRead);
   const rows = range.getDisplayValues(); 
+  
   const result = rows.map(row => {
-      const fullMeaning = String(row[3]).trim();
+      const getVal = (idx) => (idx < row.length ? String(row[idx]) : '');
+      
+      const fullMeaning = getVal(3).trim();
       let partOfSpeech = '';
       let meaning = fullMeaning;
       const posMatch = fullMeaning.match(/^(\([a-z]+\.\)|（[a-z]+\.）)\s*(.*)/i);
       if (posMatch) { partOfSpeech = posMatch[1]; meaning = posMatch[2]; }
+      
       return {
-        id: String(row[0]).trim(),
-        term: String(row[1]).trim(),
-        phonetic: row[2] ? String(row[2]).trim() : '',
+        id: getVal(0).trim(),
+        term: getVal(1).trim(),
+        phonetic: getVal(2).trim(),
         partOfSpeech: partOfSpeech,
         meaning: meaning,
-        example: row[4],
-        exampleTranslation: row[5],
-        category: row[6] || '綜合',
+        example: getVal(4),
+        exampleTranslation: getVal(5),
+        category: getVal(6) || '綜合',
         level: '1200',
-        pastExamCount: parseInt(row[7] || '0'),
-        syllables: row[8] ? String(row[8]).trim() : '',
-        tags: row[9] ? String(row[9]).trim() : '',
-        mistakeCount: parseInt(row[10] || '0'),
-        coreTag: row[11] || ''
+        pastExamCount: parseInt(getVal(7) || '0'),
+        syllables: getVal(8).trim(),
+        tags: getVal(9).trim(),
+        mistakeCount: parseInt(getVal(10) || '0'),
+        coreTag: getVal(11)
       };
   });
   return jsonOutput(result);
@@ -505,20 +931,21 @@ function getQuestions() {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return jsonOutput({});
 
-  // Read up to column 8 (H)
-  const range = sheet.getRange(2, 1, lastRow - 1, 8);
+  // Robust Column Reading
+  const lastCol = sheet.getLastColumn();
+  const numColsToRead = Math.min(Math.max(lastCol, 1), 8);
+
+  const range = sheet.getRange(2, 1, lastRow - 1, numColsToRead);
   const rows = range.getDisplayValues();
 
   const resultMap = {};
 
   rows.forEach(row => {
-      const wordId = String(row[0]);
+      const getVal = (idx) => (idx < row.length ? String(row[idx]) : '');
+      const wordId = getVal(0);
       if (!wordId) return;
 
       // --- Column Shift Detection ---
-      // Standard: [0]ID, [1]Term, [2]Q, [3]Opts, [4]Ans, [5]Exp, [6]Src, [7]Tag
-      // Shifted:  [0]ID, [1]Q, [2]Opts, [3]Ans, [4]Exp, [5]?, [6]Src, [7]Tag
-      
       let questionText = "";
       let optionsJson = "[]";
       let ansIdx = 0;
@@ -527,27 +954,26 @@ function getQuestions() {
       let tag = "";
       let term = "";
 
-      const col2 = String(row[2]).trim();
-      const col3 = String(row[3]).trim();
+      const col2 = getVal(2).trim();
+      const col3 = getVal(3).trim();
 
-      // Check if Col 2 (Index 2, C) looks like JSON Array -> Shifted format
       if (col2.startsWith('[') && col2.endsWith(']')) {
-          // Shifted Format (User pasted directly?)
-          questionText = String(row[1]); // Col B
-          optionsJson = col2;            // Col C
-          ansIdx = parseInt(row[3]);     // Col D
-          explanation = String(row[4]);  // Col E
-          source = String(row[6]);       // Col G
-          tag = String(row[7]);          // Col H
+          // Shifted Format
+          questionText = getVal(1);
+          optionsJson = col2;
+          ansIdx = parseInt(getVal(3));
+          explanation = getVal(4);
+          source = getVal(6);
+          tag = getVal(7);
       } else {
           // Standard Format
-          term = String(row[1]);         // Col B
-          questionText = String(row[2]); // Col C
-          optionsJson = col3;            // Col D
-          ansIdx = parseInt(row[4]);     // Col E
-          explanation = String(row[5]);  // Col F
-          source = String(row[6]);       // Col G
-          tag = String(row[7]);          // Col H
+          term = getVal(1);
+          questionText = getVal(2);
+          optionsJson = col3;
+          ansIdx = parseInt(getVal(4));
+          explanation = getVal(5);
+          source = getVal(6);
+          tag = getVal(7);
       }
 
       let options = [];
@@ -1073,22 +1499,25 @@ function getFamilyStats() {
 
   for (let i = 1; i < uvData.length; i++) {
     const row = uvData[i];
-    const u = String(row[COL_USER_VOCAB.USERNAME]);
+    const getVal = (idx) => (idx < row.length ? row[idx] : undefined);
+
+    const u = String(getVal(COL_USER_VOCAB.USERNAME) || '');
+    if (!u) continue;
     
     // Quiz Score (Correct Count)
-    const correct = parseInt(row[COL_USER_VOCAB.CORRECT_COUNT] || 0);
+    const correct = parseInt(getVal(COL_USER_VOCAB.CORRECT_COUNT) || 0);
     if (correct > 0) {
         userScores[u] = (userScores[u] || 0) + correct;
     }
     
     // Viewed Count
-    const viewed = row[COL_USER_VOCAB.MAP_VIEWED];
+    const viewed = getVal(COL_USER_VOCAB.MAP_VIEWED);
     if (viewed === true || String(viewed).toLowerCase() === 'true' || viewed === 1) {
         userViewedCounts[u] = (userViewedCounts[u] || 0) + 1;
     }
 
     // Mistake Count
-    const tested = parseInt(row[COL_USER_VOCAB.TESTED_COUNT] || 0);
+    const tested = parseInt(getVal(COL_USER_VOCAB.TESTED_COUNT) || 0);
     const mistakes = Math.max(0, tested - correct);
     if (mistakes > 0) {
         userMistakeCounts[u] = (userMistakeCounts[u] || 0) + mistakes;
@@ -1100,7 +1529,7 @@ function getFamilyStats() {
     }
 
     // Review Needed
-    const nextReview = row[COL_USER_VOCAB.NEXT_REVIEW_DATE];
+    const nextReview = getVal(COL_USER_VOCAB.NEXT_REVIEW_DATE);
     if (nextReview && new Date(nextReview) <= today) {
         userReviewNeededCounts[u] = (userReviewNeededCounts[u] || 0) + 1;
     }
@@ -1112,8 +1541,13 @@ function getFamilyStats() {
   const userGrammarStats = {}; // username -> { units: count, stars: sum }
   
   for (let i = 1; i < ugData.length; i++) {
-      const u = String(ugData[i][COL_USER_GRAMMAR.USERNAME]);
-      const stars = parseInt(ugData[i][COL_USER_GRAMMAR.STARS] || 0);
+      const row = ugData[i];
+      const getVal = (idx) => (idx < row.length ? row[idx] : undefined);
+
+      const u = String(getVal(COL_USER_GRAMMAR.USERNAME) || '');
+      if (!u) continue;
+
+      const stars = parseInt(getVal(COL_USER_GRAMMAR.STARS) || 0);
       
       if (!userGrammarStats[u]) userGrammarStats[u] = { units: 0, stars: 0 };
       userGrammarStats[u].units += 1;
@@ -1126,7 +1560,12 @@ function getFamilyStats() {
   const userArticleStats = {}; // username -> read count
   
   for (let i = 1; i < uaData.length; i++) {
-      const u = String(uaData[i][COL_USER_ARTICLE.USERNAME]);
+      const row = uaData[i];
+      const getVal = (idx) => (idx < row.length ? row[idx] : undefined);
+
+      const u = String(getVal(COL_USER_ARTICLE.USERNAME) || '');
+      if (!u) continue;
+
       userArticleStats[u] = (userArticleStats[u] || 0) + 1;
   }
   
@@ -1135,7 +1574,12 @@ function getFamilyStats() {
   const totalArticles = Math.max(0, aSheet.getLastRow() - 1);
   
   const leaderboard = [];
-  const allUsers = new Set([...Object.keys(userScores), ...Object.keys(userViewedCounts)]);
+  const allUsers = new Set([
+      ...Object.keys(userScores), 
+      ...Object.keys(userViewedCounts),
+      ...Object.keys(userGrammarStats),
+      ...Object.keys(userArticleStats)
+  ]);
   
   allUsers.forEach(user => {
     const score = userScores[user] || 0;

@@ -594,7 +594,12 @@ export const fetchFamilyStats = async (): Promise<FamilyStats | null> => {
   try {
     const response = await fetchWithTimeout(`${url}?action=getFamilyStats&_t=${Date.now()}`);
     if (response.ok && isJsonResponse(response)) {
-      return await response.json();
+      const data = await response.json();
+      // Validate structure
+      if (data && Array.isArray(data.leaderboard)) {
+          return data;
+      }
+      console.warn("Invalid family stats format:", data);
     }
   } catch (error: unknown) {
     console.error("Error fetching family stats", error);

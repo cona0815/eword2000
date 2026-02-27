@@ -921,7 +921,7 @@ const App: React.FC = () => {
         );
 
       case AppView.STATS:
-        const userStats = familyStats?.leaderboard.find(u => u.username === currentUser);
+        const userStats = familyStats?.leaderboard?.find(u => u.username === currentUser);
         const totalWords = familyStats?.totalWords || 0;
         const totalArticles = familyStats?.totalArticles || 0;
 
